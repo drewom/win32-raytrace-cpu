@@ -82,12 +82,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow) {
-    // Render image to buffer
-    std::vector<uint8_t> pixels(g_width * g_height * 4);
-    v3 lower_left(-2.0, -1.0, -1.0);
-    v3 horizontal(4.0, 0.0, 0.0);
-    v3 vertical(0.0, 2.0, 0.0);
+    // Aspect ratio correction
+    double aspect = double(g_width) / g_height;
+    double viewport_height = 2.0;
+    double viewport_width = viewport_height * aspect;
+
+    v3 lower_left(-viewport_width/2, -viewport_height/2, -1.0);
+    v3 horizontal(viewport_width, 0.0, 0.0);
+    v3 vertical(0.0, viewport_height, 0.0);
     v3 origin(0.0, 0.0, 0.0);
+
+    std::vector<uint8_t> pixels(g_width * g_height * 4);
 
     for (int j = g_height-1; j >= 0; --j) {
         for (int i = 0; i < g_width; ++i) {
