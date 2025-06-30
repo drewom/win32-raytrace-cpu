@@ -6,6 +6,7 @@
 #include <random>
 #include <thread>
 #include <emmintrin.h> // SIMD intrinsics
+#include <immintrin.h> // For AVX512/SSE2 intrinsics
 #include <chrono>
 
 // Menu command IDs
@@ -133,6 +134,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 }
 
+// Helper: Runtime check for AVX512F support
+bool cpu_supports_avx512f() {
+    int regs[4] = {0};
+#if defined(_MSC_VER)
+    __cpuidex(regs, 7, 0);
+    return (regs[1] & (1 << 16)) != 0;
+#elif defined(__GNUC__) || defined(__clang__)
+    __asm__ __volatile__(
+        "cpuid"
+        : "=a"(regs[0]), "=b"(regs[1]), "=c"(regs[2]), "=d"(regs[3])
+        : "a"(7), "c"(0));
+    return (regs[1] & (1 << 16)) != 0;
+#else
+    return false;
+#endif
+}
+
 void RenderRaytraceToBitmap() {
     using namespace std::chrono;
     auto start = high_resolution_clock::now();
@@ -168,7 +186,112 @@ void RenderRaytraceToBitmap() {
     unsigned int num_threads = std::thread::hardware_concurrency();
     if (num_threads == 0) num_threads = 4; // Fallback
     std::vector<std::thread> threads;
-    auto render_band = [&](int y_start, int y_end) {
+
+    // Runtime AVX512F check (once per render)
+    static bool use_avx512 = false;
+#if defined(__AVX512F__)
+        use_avx512 = cpu_supports_avx512f();
+#endif 
+
+    auto render_band_avx512 = [&](int y_start, int y_end) {
+#if defined(__AVX512F__)
+        for (int j = y_start; j < y_end; ++j) {
+            int i = 0;
+            for (; i <= g_width - 16; i += 16) {
+                __m512 col_x = _mm512_setzero_ps();
+                __m512 col_y = _mm512_setzero_ps();
+                __m512 col_z = _mm512_setzero_ps();
+
+                float r_x[16], r_y[16], r_z[16];
+
+                for (int sy = 0; sy < grid_y; ++sy) {
+                    for (int sx = 0; sx < grid_x; ++sx) {
+                        float u[16], v[16];
+                        for (int k = 0; k < 16; ++k) {
+                            u[k] = float((i + k + (sx + 0.5f) / grid_x) / (g_width - 1));
+                            v[k] = float((j + (sy + 0.5f) / grid_y) / (g_height - 1));
+                        }
+                        v3 dirs[16];
+                        for (int k = 0; k < 16; ++k)
+                            dirs[k] = lower_left + horizontal * u[k] + vertical * v[k];
+                        for (int k = 0; k < 16; ++k) {
+                            ray r(origin, dirs[k]);
+                            v3 c = ray_color(r);
+                            r_x[k] = c.x;
+                            r_y[k] = c.y;
+                            r_z[k] = c.z;
+                        }
+                        col_x = _mm512_add_ps(col_x, _mm512_loadu_ps(r_x));
+                        col_y = _mm512_add_ps(col_y, _mm512_loadu_ps(r_y));
+                        col_z = _mm512_add_ps(col_z, _mm512_loadu_ps(r_z));
+                    }
+                }
+                float inv_spp = 1.0f / float(spp);
+                __m512 inv = _mm512_set1_ps(inv_spp);
+                col_x = _mm512_mul_ps(col_x, inv);
+                col_y = _mm512_mul_ps(col_y, inv);
+                col_z = _mm512_mul_ps(col_z, inv);
+
+                // Gamma correction (sqrt)
+                col_x = _mm512_sqrt_ps(col_x);
+                col_y = _mm512_sqrt_ps(col_y);
+                col_z = _mm512_sqrt_ps(col_z);
+
+                // Clamp and convert to int
+                __m512 max_val = _mm512_set1_ps(1.0f);
+                __m512 min_val = _mm512_set1_ps(0.0f);
+                col_x = _mm512_min_ps(_mm512_max_ps(col_x, min_val), max_val);
+                col_y = _mm512_min_ps(_mm512_max_ps(col_y, min_val), max_val);
+                col_z = _mm512_min_ps(_mm512_max_ps(col_z, min_val), max_val);
+
+                __m512 scale = _mm512_set1_ps(255.99f);
+                col_x = _mm512_mul_ps(col_x, scale);
+                col_y = _mm512_mul_ps(col_y, scale);
+                col_z = _mm512_mul_ps(col_z, scale);
+
+                float ir[16], ig[16], ib[16];
+                _mm512_storeu_ps(ir, col_x);
+                _mm512_storeu_ps(ig, col_y);
+                _mm512_storeu_ps(ib, col_z);
+
+                for (int k = 0; k < 16; ++k) {
+                    int idx = 4 * ((g_height - 1 - j) * g_width + (i + k));
+                    pixels[idx + 0] = (uint8_t)ib[k]; // Blue
+                    pixels[idx + 1] = (uint8_t)ig[k]; // Green
+                    pixels[idx + 2] = (uint8_t)ir[k]; // Red
+                    pixels[idx + 3] = 255;            // Alpha
+                }
+            }
+            // Scalar fallback for remaining pixels
+            for (; i < g_width; ++i) {
+                v3 col(0, 0, 0);
+                for (int sy = 0; sy < grid_y; ++sy) {
+                    for (int sx = 0; sx < grid_x; ++sx) {
+                        float u = (i + (sx + 0.5f) / grid_x) / (g_width-1);
+                        float v = (j + (sy + 0.5f) / grid_y) / (g_height-1);
+                        ray r(origin, lower_left + horizontal*u + vertical*v);
+                        col = col + ray_color(r);
+                    }
+                }
+                col = col / float(spp);
+                col = v3(std::sqrtf(col.x), std::sqrtf(col.y), std::sqrtf(col.z));
+                int ir = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.x)));
+                int ig = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.y)));
+                int ib = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.z)));
+                int idx = 4 * ((g_height-1-j)*g_width + i);
+                pixels[idx+0] = (uint8_t)ib;
+                pixels[idx+1] = (uint8_t)ig;
+                pixels[idx+2] = (uint8_t)ir;
+                pixels[idx+3] = 255;
+            }
+        }
+#else
+        // If not compiled with AVX512F, fallback to SSE2
+        // (This branch will never be taken if __AVX512F__ is not defined)
+#endif
+    };
+
+    auto render_band_sse2 = [&](int y_start, int y_end) {
         for (int j = y_start; j < y_end; ++j) {
             int i = 0;
             for (; i <= g_width - 4; i += 4) {
@@ -261,12 +384,17 @@ void RenderRaytraceToBitmap() {
         }
     };
 
+    // Launch threads
     int rows_per_thread = g_height / num_threads;
     int y = 0;
     for (unsigned int t = 0; t < num_threads; ++t) {
         int y_start = y;
         int y_end = (t == num_threads - 1) ? g_height : y + rows_per_thread;
-        threads.emplace_back(render_band, y_start, y_end);
+        if (use_avx512) {
+            threads.emplace_back(render_band_avx512, y_start, y_end);
+        } else {
+            threads.emplace_back(render_band_sse2, y_start, y_end);
+        }
         y = y_end;
     }
     for (auto& th : threads) th.join();
@@ -286,13 +414,22 @@ void RenderRaytraceToBitmap() {
         memcpy(pBits, pixels.data(), pixels.size());
     }
 
-    // Update the window title with render resolution & time
+    // Update the window title with render resolution, time, and architecture
     auto end = high_resolution_clock::now();
     auto ms = duration_cast<milliseconds>(end - start).count();
     HWND hwnd = FindWindow(L"RaytraceWindow", nullptr);
     if (hwnd) {
-        wchar_t title[128];
-        swprintf(title, 128, L"Raytracing Demo - %dx%d - Last render: %lld ms", g_width, g_height, ms);
+        wchar_t arch[32];
+#if defined(__AVX512F__)
+        if (use_avx512)
+            wcscpy_s(arch, L"AVX512F");
+        else
+            wcscpy_s(arch, L"SSE2");
+#else
+        wcscpy_s(arch, L"SSE2");
+#endif
+        wchar_t title[160];
+        swprintf(title, 160, L"Raytracing Demo - %dx%d - Last render: %lld ms [%s]", g_width, g_height, ms, arch);
         SetWindowText(hwnd, title);
     }
 }
