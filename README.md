@@ -8,3 +8,5 @@ Used to demonstrate a simple way to handle hardware dependent multithreading and
 - **Multithreading:** Splits rendering work across multiple CPU threads for faster performance.
 - **SIMD Acceleration:** Uses SSE2 or (if available) AVX512 SIMD instructions to speed up pixel calculations.
 - **Basic Performance Info:** Updates the window title with the current resolution, render time, and which SIMD architecture was used.
+
+![Screenshot](./images/example.png)
