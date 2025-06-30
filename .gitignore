@@ -39,3 +39,9 @@
 
 # debug information files
 *.dwo
+/.vs/testbench
+/testbench/x64
+/x64/Debug
+*.vcxproj
+*.filters
+*.user
