@@ -1,13 +1,11 @@
 #include <windows.h>
 #include <cmath>
 #include <vector>
-#include <iostream>
 #include <sal.h> // Include for annotations
-#include <random>
 #include <thread>
+#include <chrono>
 #include <emmintrin.h> // SIMD intrinsics
 #include <immintrin.h> // For AVX512/SSE2 intrinsics
-#include <chrono>
 
 // Menu command IDs
 #define IDM_AA_1X   1001
