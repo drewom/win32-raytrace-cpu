@@ -57,6 +57,9 @@ static v3 ray_color(const ray& r) {
 HBITMAP g_hBitmap = nullptr;
 int g_width = 1000, g_height = 600;
 
+// Forward declaration
+void RenderRaytraceToBitmap();
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_PAINT: {
@@ -72,6 +75,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         EndPaint(hwnd, &ps);
         return 0;
     }
+    case WM_SIZE: {
+        int new_width = LOWORD(lParam);
+        int new_height = HIWORD(lParam);
+        if (new_width > 0 && new_height > 0) {
+            g_width = new_width;
+            g_height = new_height;
+            RenderRaytraceToBitmap();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
     case WM_DESTROY:
         if (g_hBitmap) DeleteObject(g_hBitmap);
         PostQuitMessage(0);
@@ -81,7 +95,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 }
 
-int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow) {
+void RenderRaytraceToBitmap() {
+    if (g_hBitmap) {
+        DeleteObject(g_hBitmap);
+        g_hBitmap = nullptr;
+    }
+    if (g_width <= 0 || g_height <= 0) return;
+
     // Aspect ratio correction
     double aspect = double(g_width) / g_height;
     double viewport_height = 2.0;
@@ -125,7 +145,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     if (g_hBitmap && pBits) {
         memcpy(pBits, pixels.data(), pixels.size());
     }
+}
 
+int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow) {
     // Register window class
     WNDCLASS wc = {};
     wc.lpfnWndProc = WndProc;
@@ -136,12 +158,16 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
     HWND hwnd = CreateWindowEx(
         0, L"RaytraceWindow", L"Raytracing Demo",
-        WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
+        WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, g_width+16, g_height+39,
         nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
+
+    // Initial render
+    RenderRaytraceToBitmap();
+    InvalidateRect(hwnd, nullptr, FALSE);
 
     // Message loop
     MSG msg;
