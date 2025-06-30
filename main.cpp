@@ -5,6 +5,7 @@
 #include <sal.h> // Include for annotations
 #include <random>
 #include <thread>
+#include <emmintrin.h> // SIMD intrinsics
 
 // Menu command IDs
 #define IDM_AA_1X   1001
@@ -165,7 +166,74 @@ void RenderRaytraceToBitmap() {
     std::vector<std::thread> threads;
     auto render_band = [&](int y_start, int y_end) {
         for (int j = y_start; j < y_end; ++j) {
-            for (int i = 0; i < g_width; ++i) {
+            int i = 0;
+            for (; i <= g_width - 4; i += 4) {
+                __m128 col_x = _mm_setzero_ps();
+                __m128 col_y = _mm_setzero_ps();
+                __m128 col_z = _mm_setzero_ps();
+
+                float r_x[4], r_y[4], r_z[4];
+
+                for (int sy = 0; sy < grid_y; ++sy) {
+                    for (int sx = 0; sx < grid_x; ++sx) {
+                        float u[4], v[4];
+                        for (int k = 0; k < 4; ++k) {
+                            u[k] = float((i + k + (sx + 0.5f) / grid_x) / (g_width - 1));
+                            v[k] = float((j + (sy + 0.5f) / grid_y) / (g_height - 1));
+                        }
+                        v3 dirs[4];
+                        for (int k = 0; k < 4; ++k)
+                            dirs[k] = lower_left + horizontal * u[k] + vertical * v[k];
+                        for (int k = 0; k < 4; ++k) {
+                            ray r(origin, dirs[k]);
+                            v3 c = ray_color(r);
+                            r_x[k] = c.x;
+                            r_y[k] = c.y;
+                            r_z[k] = c.z;
+                        }
+                        col_x = _mm_add_ps(col_x, _mm_loadu_ps(r_x));
+                        col_y = _mm_add_ps(col_y, _mm_loadu_ps(r_y));
+                        col_z = _mm_add_ps(col_z, _mm_loadu_ps(r_z));
+                    }
+                }
+                float inv_spp = 1.0f / float(spp);
+                __m128 inv = _mm_set1_ps(inv_spp);
+                col_x = _mm_mul_ps(col_x, inv);
+                col_y = _mm_mul_ps(col_y, inv);
+                col_z = _mm_mul_ps(col_z, inv);
+
+                // Gamma correction (sqrt)
+                col_x = _mm_sqrt_ps(col_x);
+                col_y = _mm_sqrt_ps(col_y);
+                col_z = _mm_sqrt_ps(col_z);
+
+                // Clamp and convert to int
+                __m128 max_val = _mm_set1_ps(1.0f);
+                __m128 min_val = _mm_set1_ps(0.0f);
+                col_x = _mm_min_ps(_mm_max_ps(col_x, min_val), max_val);
+                col_y = _mm_min_ps(_mm_max_ps(col_y, min_val), max_val);
+                col_z = _mm_min_ps(_mm_max_ps(col_z, min_val), max_val);
+
+                __m128 scale = _mm_set1_ps(255.99f);
+                col_x = _mm_mul_ps(col_x, scale);
+                col_y = _mm_mul_ps(col_y, scale);
+                col_z = _mm_mul_ps(col_z, scale);
+
+                float ir[4], ig[4], ib[4];
+                _mm_storeu_ps(ir, col_x);
+                _mm_storeu_ps(ig, col_y);
+                _mm_storeu_ps(ib, col_z);
+
+                for (int k = 0; k < 4; ++k) {
+                    int idx = 4 * ((g_height - 1 - j) * g_width + (i + k));
+                    pixels[idx + 0] = (uint8_t)ib[k]; // Blue
+                    pixels[idx + 1] = (uint8_t)ig[k]; // Green
+                    pixels[idx + 2] = (uint8_t)ir[k]; // Red
+                    pixels[idx + 3] = 255;            // Alpha
+                }
+            }
+            // Scalar fallback for remaining pixels
+            for (; i < g_width; ++i) {
                 v3 col(0, 0, 0);
                 for (int sy = 0; sy < grid_y; ++sy) {
                     for (int sx = 0; sx < grid_x; ++sx) {
@@ -176,18 +244,15 @@ void RenderRaytraceToBitmap() {
                     }
                 }
                 col = col / float(spp);
-
-                // Gamma correction (gamma=2.0)
-                col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
-
+                col = v3(std::sqrtf(col.x), std::sqrtf(col.y), std::sqrtf(col.z));
                 int ir = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.x)));
                 int ig = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.y)));
                 int ib = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.z)));
                 int idx = 4 * ((g_height-1-j)*g_width + i);
-                pixels[idx+0] = (uint8_t)ib; // Blue
-                pixels[idx+1] = (uint8_t)ig; // Green
-                pixels[idx+2] = (uint8_t)ir; // Red
-                pixels[idx+3] = 255;         // Alpha
+                pixels[idx+0] = (uint8_t)ib;
+                pixels[idx+1] = (uint8_t)ig;
+                pixels[idx+2] = (uint8_t)ir;
+                pixels[idx+3] = 255;
             }
         }
     };
