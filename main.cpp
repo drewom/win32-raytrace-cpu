@@ -149,19 +149,29 @@ void RenderRaytraceToBitmap() {
 
     std::vector<uint8_t> pixels(g_width * g_height * 4);
 
-    std::mt19937 rng((unsigned int)time(nullptr));
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    // Non-random subpixel supersampling (regular grid)
+    int spp = g_samples_per_pixel;
+    int grid_x = 1, grid_y = 1;
+    // Find grid size (try to make it as square as possible)
+    for (int n = 1; n * n <= spp; ++n) {
+        if (spp % n == 0) {
+            grid_x = n;
+            grid_y = spp / n;
+        }
+    }
 
     for (int j = g_height-1; j >= 0; --j) {
         for (int i = 0; i < g_width; ++i) {
             v3 col(0, 0, 0);
-            for (int s = 0; s < g_samples_per_pixel; ++s) {
-                double u = (i + dist(rng)) / (g_width-1);
-                double v = (j + dist(rng)) / (g_height-1);
-                ray r(origin, lower_left + horizontal*u + vertical*v);
-                col = col + ray_color(r);
+            for (int sy = 0; sy < grid_y; ++sy) {
+                for (int sx = 0; sx < grid_x; ++sx) {
+                    double u = (i + (sx + 0.5) / grid_x) / (g_width-1);
+                    double v = (j + (sy + 0.5) / grid_y) / (g_height-1);
+                    ray r(origin, lower_left + horizontal*u + vertical*v);
+                    col = col + ray_color(r);
+                }
             }
-            col = col / double(g_samples_per_pixel);
+            col = col / double(spp);
 
             // Gamma correction (gamma=2.0)
             col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
