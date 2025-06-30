@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sal.h> // Include for annotations
 #include <random>
+#include <thread>
 
 // Menu command IDs
 #define IDM_AA_1X   1001
@@ -137,7 +138,6 @@ void RenderRaytraceToBitmap() {
     }
     if (g_width <= 0 || g_height <= 0) return;
 
-    // Aspect ratio correction
     double aspect = double(g_width) / g_height;
     double viewport_height = 2.0;
     double viewport_width = viewport_height * aspect;
@@ -152,7 +152,6 @@ void RenderRaytraceToBitmap() {
     // Non-random subpixel supersampling (regular grid)
     int spp = g_samples_per_pixel;
     int grid_x = 1, grid_y = 1;
-    // Find grid size (try to make it as square as possible)
     for (int n = 1; n * n <= spp; ++n) {
         if (spp % n == 0) {
             grid_x = n;
@@ -160,32 +159,48 @@ void RenderRaytraceToBitmap() {
         }
     }
 
-    for (int j = g_height-1; j >= 0; --j) {
-        for (int i = 0; i < g_width; ++i) {
-            v3 col(0, 0, 0);
-            for (int sy = 0; sy < grid_y; ++sy) {
-                for (int sx = 0; sx < grid_x; ++sx) {
-                    double u = (i + (sx + 0.5) / grid_x) / (g_width-1);
-                    double v = (j + (sy + 0.5) / grid_y) / (g_height-1);
-                    ray r(origin, lower_left + horizontal*u + vertical*v);
-                    col = col + ray_color(r);
+    // Multithreading setup
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) num_threads = 4; // Fallback
+    std::vector<std::thread> threads;
+    auto render_band = [&](int y_start, int y_end) {
+        for (int j = y_start; j < y_end; ++j) {
+            for (int i = 0; i < g_width; ++i) {
+                v3 col(0, 0, 0);
+                for (int sy = 0; sy < grid_y; ++sy) {
+                    for (int sx = 0; sx < grid_x; ++sx) {
+                        double u = (i + (sx + 0.5) / grid_x) / (g_width-1);
+                        double v = (j + (sy + 0.5) / grid_y) / (g_height-1);
+                        ray r(origin, lower_left + horizontal*u + vertical*v);
+                        col = col + ray_color(r);
+                    }
                 }
+                col = col / double(spp);
+
+                // Gamma correction (gamma=2.0)
+                col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
+
+                int ir = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.x)));
+                int ig = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.y)));
+                int ib = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.z)));
+                int idx = 4 * ((g_height-1-j)*g_width + i);
+                pixels[idx+0] = (uint8_t)ib; // Blue
+                pixels[idx+1] = (uint8_t)ig; // Green
+                pixels[idx+2] = (uint8_t)ir; // Red
+                pixels[idx+3] = 255;         // Alpha
             }
-            col = col / double(spp);
-
-            // Gamma correction (gamma=2.0)
-            col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
-
-            int ir = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.x)));
-            int ig = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.y)));
-            int ib = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.z)));
-            int idx = 4 * ((g_height-1-j)*g_width + i);
-            pixels[idx+0] = (uint8_t)ib; // Blue
-            pixels[idx+1] = (uint8_t)ig; // Green
-            pixels[idx+2] = (uint8_t)ir; // Red
-            pixels[idx+3] = 255;         // Alpha
         }
+    };
+
+    int rows_per_thread = g_height / num_threads;
+    int y = 0;
+    for (unsigned int t = 0; t < num_threads; ++t) {
+        int y_start = y;
+        int y_end = (t == num_threads - 1) ? g_height : y + rows_per_thread;
+        threads.emplace_back(render_band, y_start, y_end);
+        y = y_end;
     }
+    for (auto& th : threads) th.join();
 
     // Create DIB section
     BITMAPINFO bmi = {};
