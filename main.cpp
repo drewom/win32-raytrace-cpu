@@ -14,14 +14,14 @@
 #define IDM_AA_16X  1016
 
 struct v3 {
-    double x, y, z;
-    v3(double x_=0, double y_=0, double z_=0) : x(x_), y(y_), z(z_) {}
+    float x, y, z;
+    v3(float x_=0, float y_=0, float z_=0) : x(x_), y(y_), z(z_) {}
     v3 operator+(const v3& b) const { return v3(x+b.x, y+b.y, z+b.z); }
     v3 operator-(const v3& b) const { return v3(x-b.x, y-b.y, z-b.z); }
-    v3 operator*(double b) const { return v3(x*b, y*b, z*b); }
-    v3 operator/(double b) const { return v3(x/b, y/b, z/b); }
-    double dot(const v3& b) const { return x*b.x + y*b.y + z*b.z; }
-    v3 norm() const { double mg=std::sqrt(x*x+y*y+z*z); return *this/mg; }
+    v3 operator*(float b) const { return v3(x*b, y*b, z*b); }
+    v3 operator/(float b) const { return v3(x/b, y/b, z/b); }
+    float dot(const v3& b) const { return x*b.x + y*b.y + z*b.z; }
+    v3 norm() const { float mg=std::sqrtf(x*x+y*y+z*z); return *this/mg; }
 };
 
 struct ray {
@@ -29,37 +29,37 @@ struct ray {
     ray(const v3& o, const v3& d) : orig(o), dir(d) {}
 };
 
-static bool hit_sphere(const v3& center, double radius, const ray& r, double& t) {
+static bool hit_sphere(const v3& center, float radius, const ray& r, float& t) {
     v3 oc = r.orig - center;
-    double a = r.dir.dot(r.dir);
-    double b = 2.0 * oc.dot(r.dir);
-    double c = oc.dot(oc) - radius*radius;
-    double discriminant = b*b - 4*a*c;
+    float a = r.dir.dot(r.dir);
+    float b = 2.0f * oc.dot(r.dir);
+    float c = oc.dot(oc) - radius*radius;
+    float discriminant = b*b - 4*a*c;
     if (discriminant < 0) return false;
-    t = (-b - std::sqrt(discriminant)) / (2.0*a);
+    t = (-b - std::sqrtf(discriminant)) / (2.0f*a);
     return t > 0;
 }
 
 static v3 ray_color(const ray& r) {
-    double t;
+    float t;
     // Sphere at (0,0,-1) with radius 0.5
     if (hit_sphere(v3(0,0,-1), 0.5, r, t)) {
         v3 N = (r.orig + r.dir*t - v3(0,0,-1)).norm();
-        return v3(N.x+1, N.y+1, N.z+1) * 0.5;
+        return v3(N.x+1, N.y+1, N.z+1) * 0.5f;
     }
     // Simple ground plane at y = -0.5
     if (r.dir.y != 0) {
-        t = (-0.5 - r.orig.y) / r.dir.y;
+        t = (-0.5f - r.orig.y) / r.dir.y;
         if (t > 0) {
             v3 p = r.orig + r.dir*t;
-            double checker = (int(std::floor(p.x) + std::floor(p.z)) % 2 == 0) ? 0.8 : 0.2;
+            float checker = (int(std::floor(p.x) + std::floor(p.z)) % 2 == 0) ? 0.8f : 0.2f;
             return v3(checker, checker, checker);
         }
     }
     // Background gradient
     v3 unit_dir = r.dir.norm();
-    t = 0.5*(unit_dir.y + 1.0);
-    return v3(1.0, 1.0, 1.0)*(1.0-t) + v3(0.5, 0.7, 1.0)*t;
+    t = 0.5f*(unit_dir.y + 1.0f);
+    return v3(1.0f, 1.0f, 1.0f)*(1.0f-t) + v3(0.5f, 0.7f, 1.0f)*t;
 }
 
 // Globals for Win32
@@ -138,9 +138,9 @@ void RenderRaytraceToBitmap() {
     }
     if (g_width <= 0 || g_height <= 0) return;
 
-    double aspect = double(g_width) / g_height;
-    double viewport_height = 2.0;
-    double viewport_width = viewport_height * aspect;
+    float aspect = float(g_width) / g_height;
+    float viewport_height = 2.0;
+    float viewport_width = viewport_height * aspect;
 
     v3 lower_left(-viewport_width/2, -viewport_height/2, -1.0);
     v3 horizontal(viewport_width, 0.0, 0.0);
@@ -169,20 +169,20 @@ void RenderRaytraceToBitmap() {
                 v3 col(0, 0, 0);
                 for (int sy = 0; sy < grid_y; ++sy) {
                     for (int sx = 0; sx < grid_x; ++sx) {
-                        double u = (i + (sx + 0.5) / grid_x) / (g_width-1);
-                        double v = (j + (sy + 0.5) / grid_y) / (g_height-1);
+                        float u = (i + (sx + 0.5f) / grid_x) / (g_width-1);
+                        float v = (j + (sy + 0.5f) / grid_y) / (g_height-1);
                         ray r(origin, lower_left + horizontal*u + vertical*v);
                         col = col + ray_color(r);
                     }
                 }
-                col = col / double(spp);
+                col = col / float(spp);
 
                 // Gamma correction (gamma=2.0)
                 col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
 
-                int ir = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.x)));
-                int ig = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.y)));
-                int ib = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.z)));
+                int ir = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.x)));
+                int ig = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.y)));
+                int ib = int(255.99f * (std::min)(1.0f, (std::max)(0.0f, col.z)));
                 int idx = 4 * ((g_height-1-j)*g_width + i);
                 pixels[idx+0] = (uint8_t)ib; // Blue
                 pixels[idx+1] = (uint8_t)ig; // Green
