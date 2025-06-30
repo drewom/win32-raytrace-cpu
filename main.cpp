@@ -3,6 +3,7 @@
 #include <vector>
 #include <iostream>
 #include <sal.h> // Include for annotations
+#include <random>
 
 struct v3 {
     double x, y, z;
@@ -114,15 +115,28 @@ void RenderRaytraceToBitmap() {
 
     std::vector<uint8_t> pixels(g_width * g_height * 4);
 
+    // Antialiasing: number of samples per pixel
+    const int samples_per_pixel = 4;
+    std::mt19937 rng((unsigned int)time(nullptr));
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+
     for (int j = g_height-1; j >= 0; --j) {
         for (int i = 0; i < g_width; ++i) {
-            double u = double(i) / (g_width-1);
-            double v = double(j) / (g_height-1);
-            ray r(origin, lower_left + horizontal*u + vertical*v);
-            v3 col = ray_color(r);
-            int ir = int(255.99*col.x);
-            int ig = int(255.99*col.y);
-            int ib = int(255.99*col.z);
+            v3 col(0, 0, 0);
+            for (int s = 0; s < samples_per_pixel; ++s) {
+                double u = (i + dist(rng)) / (g_width-1);
+                double v = (j + dist(rng)) / (g_height-1);
+                ray r(origin, lower_left + horizontal*u + vertical*v);
+                col = col + ray_color(r);
+            }
+            col = col / double(samples_per_pixel);
+
+            // Gamma correction (gamma=2.0)
+            col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
+
+            int ir = int(255.99 * min(1.0, max(0.0, col.x)));
+            int ig = int(255.99 * min(1.0, max(0.0, col.y)));
+            int ib = int(255.99 * min(1.0, max(0.0, col.z)));
             int idx = 4 * ((g_height-1-j)*g_width + i);
             pixels[idx+0] = (uint8_t)ib; // Blue
             pixels[idx+1] = (uint8_t)ig; // Green
