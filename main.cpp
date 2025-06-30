@@ -5,6 +5,13 @@
 #include <sal.h> // Include for annotations
 #include <random>
 
+// Menu command IDs
+#define IDM_AA_1X   1001
+#define IDM_AA_2X   1002
+#define IDM_AA_4X   1004
+#define IDM_AA_8X   1008
+#define IDM_AA_16X  1016
+
 struct v3 {
     double x, y, z;
     v3(double x_=0, double y_=0, double z_=0) : x(x_), y(y_), z(z_) {}
@@ -57,9 +64,18 @@ static v3 ray_color(const ray& r) {
 // Globals for Win32
 HBITMAP g_hBitmap = nullptr;
 int g_width = 1000, g_height = 600;
+int g_samples_per_pixel = 4; // Default AA
 
 // Forward declaration
 void RenderRaytraceToBitmap();
+
+void UpdateMenuChecks(HMENU hMenu) {
+    CheckMenuItem(hMenu, IDM_AA_1X,  MF_BYCOMMAND | (g_samples_per_pixel == 1  ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, IDM_AA_2X,  MF_BYCOMMAND | (g_samples_per_pixel == 2  ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, IDM_AA_4X,  MF_BYCOMMAND | (g_samples_per_pixel == 4  ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, IDM_AA_8X,  MF_BYCOMMAND | (g_samples_per_pixel == 8  ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, IDM_AA_16X, MF_BYCOMMAND | (g_samples_per_pixel == 16 ? MF_CHECKED : MF_UNCHECKED));
+}
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
@@ -82,6 +98,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (new_width > 0 && new_height > 0) {
             g_width = new_width;
             g_height = new_height;
+            RenderRaytraceToBitmap();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_COMMAND: {
+        HMENU hMenu = GetMenu(hwnd);
+        int prev_samples = g_samples_per_pixel;
+        switch (LOWORD(wParam)) {
+        case IDM_AA_1X:   g_samples_per_pixel = 1; break;
+        case IDM_AA_2X:   g_samples_per_pixel = 2; break;
+        case IDM_AA_4X:   g_samples_per_pixel = 4; break;
+        case IDM_AA_8X:   g_samples_per_pixel = 8; break;
+        case IDM_AA_16X:  g_samples_per_pixel = 16; break;
+        default: return DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+        if (g_samples_per_pixel != prev_samples) {
+            UpdateMenuChecks(hMenu);
             RenderRaytraceToBitmap();
             InvalidateRect(hwnd, nullptr, FALSE);
         }
@@ -115,28 +149,26 @@ void RenderRaytraceToBitmap() {
 
     std::vector<uint8_t> pixels(g_width * g_height * 4);
 
-    // Antialiasing: number of samples per pixel
-    const int samples_per_pixel = 4;
     std::mt19937 rng((unsigned int)time(nullptr));
     std::uniform_real_distribution<double> dist(0.0, 1.0);
 
     for (int j = g_height-1; j >= 0; --j) {
         for (int i = 0; i < g_width; ++i) {
             v3 col(0, 0, 0);
-            for (int s = 0; s < samples_per_pixel; ++s) {
+            for (int s = 0; s < g_samples_per_pixel; ++s) {
                 double u = (i + dist(rng)) / (g_width-1);
                 double v = (j + dist(rng)) / (g_height-1);
                 ray r(origin, lower_left + horizontal*u + vertical*v);
                 col = col + ray_color(r);
             }
-            col = col / double(samples_per_pixel);
+            col = col / double(g_samples_per_pixel);
 
             // Gamma correction (gamma=2.0)
             col = v3(std::sqrt(col.x), std::sqrt(col.y), std::sqrt(col.z));
 
-            int ir = int(255.99 * min(1.0, max(0.0, col.x)));
-            int ig = int(255.99 * min(1.0, max(0.0, col.y)));
-            int ib = int(255.99 * min(1.0, max(0.0, col.z)));
+            int ir = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.x)));
+            int ig = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.y)));
+            int ib = int(255.99 * (std::min)(1.0, (std::max)(0.0, col.z)));
             int idx = 4 * ((g_height-1-j)*g_width + i);
             pixels[idx+0] = (uint8_t)ib; // Blue
             pixels[idx+1] = (uint8_t)ig; // Green
@@ -170,11 +202,24 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClass(&wc);
 
+    // Create menu
+    HMENU hMenu = CreateMenu();
+    HMENU hAASub = CreateMenu();
+    AppendMenu(hAASub, MF_STRING, IDM_AA_1X,  L"1x");
+    AppendMenu(hAASub, MF_STRING, IDM_AA_2X,  L"2x");
+    AppendMenu(hAASub, MF_STRING, IDM_AA_4X,  L"4x");
+    AppendMenu(hAASub, MF_STRING, IDM_AA_8X,  L"8x");
+    AppendMenu(hAASub, MF_STRING, IDM_AA_16X, L"16x");
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hAASub, L"Antialiasing");
+
     HWND hwnd = CreateWindowEx(
         0, L"RaytraceWindow", L"Raytracing Demo",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, g_width+16, g_height+39,
+        CW_USEDEFAULT, CW_USEDEFAULT, g_width+16, g_height+60,
         nullptr, nullptr, hInstance, nullptr);
+
+    SetMenu(hwnd, hMenu);
+    UpdateMenuChecks(hMenu);
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
