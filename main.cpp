@@ -6,6 +6,7 @@
 #include <random>
 #include <thread>
 #include <emmintrin.h> // SIMD intrinsics
+#include <chrono>
 
 // Menu command IDs
 #define IDM_AA_1X   1001
@@ -133,6 +134,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 void RenderRaytraceToBitmap() {
+    using namespace std::chrono;
+    auto start = high_resolution_clock::now();
+
     if (g_hBitmap) {
         DeleteObject(g_hBitmap);
         g_hBitmap = nullptr;
@@ -140,13 +144,13 @@ void RenderRaytraceToBitmap() {
     if (g_width <= 0 || g_height <= 0) return;
 
     float aspect = float(g_width) / g_height;
-    float viewport_height = 2.0;
+    float viewport_height = 2.0f;
     float viewport_width = viewport_height * aspect;
 
-    v3 lower_left(-viewport_width/2, -viewport_height/2, -1.0);
-    v3 horizontal(viewport_width, 0.0, 0.0);
-    v3 vertical(0.0, viewport_height, 0.0);
-    v3 origin(0.0, 0.0, 0.0);
+    v3 lower_left(-viewport_width/2, -viewport_height/2, -1.0f);
+    v3 horizontal(viewport_width, 0.0f, 0.0f);
+    v3 vertical(0.0f, viewport_height, 0.0f);
+    v3 origin(0.0f, 0.0f, 0.0f);
 
     std::vector<uint8_t> pixels(g_width * g_height * 4);
 
@@ -280,6 +284,16 @@ void RenderRaytraceToBitmap() {
     g_hBitmap = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
     if (g_hBitmap && pBits) {
         memcpy(pBits, pixels.data(), pixels.size());
+    }
+
+    // Update the window title with render resolution & time
+    auto end = high_resolution_clock::now();
+    auto ms = duration_cast<milliseconds>(end - start).count();
+    HWND hwnd = FindWindow(L"RaytraceWindow", nullptr);
+    if (hwnd) {
+        wchar_t title[128];
+        swprintf(title, 128, L"Raytracing Demo - %dx%d - Last render: %lld ms", g_width, g_height, ms);
+        SetWindowText(hwnd, title);
     }
 }
 
